@@ -3,6 +3,7 @@ var request = require('request');
 var cheerio = require('cheerio');
 var Twit = require('twit');
 var jsonfile = require('jsonfile');
+var util = require('util');
 
 process.title = "DovizRobotu";
 
@@ -10,72 +11,96 @@ const dataFile = "./data.json";
 
 
 var robotConfig = {
-    currencies : {
-        usd: {
+    currencies: {
+        USD: {
             name: 'Dolar',
-            updateurl: 'http://www.xe.com/currencyconverter/convert/?Amount=1&From=USD&To=TRY',
-            lastPrice: 0,
+            symbol: 'USD',
+            convertTo: 'TRY',
+            highestPrice: 0,
+            lastPostedPrice: 0,
             lastPriceTime: '',
             currentPrice: 0
         },
-        eur: {
+        EUR: {
             name: 'Euro',
-            updateurl: 'http://www.xe.com/currencyconverter/convert/?Amount=1&From=EUR&To=TRY',
-            lastPrice: 0,
+            symbol: 'EUR',
+            convertTo: 'TRY',
+            highestPrice: 0,
+            lastPostedPrice: 0,
             lastPriceTime: '',
             currentPrice: 0
         },
-        xbt: {
+        XBT: {
             name: 'Bitcoin',
-            updateurl: 'http://www.xe.com/currencyconverter/convert/?Amount=1&From=XBT&To=TRY',
-            lastPrice: 0,
+            symbol: 'XBT',
+            convertTo: 'USD',
+            highestPrice: 0,
+            lastPostedPrice: 0,
             lastPriceTime: '',
             currentPrice: 0
         },
-        gbp: {
+        GBP: {
             name: 'Pound',
-            updateurl: 'http://www.xe.com/currencyconverter/convert/?Amount=1&From=GBP&To=TRY',
-            lastPrice: 0,
+            symbol: 'GBP',
+            convertTo: 'TRY',
+            highestPrice: 0,
+            lastPostedPrice: 0,
             lastPriceTime: '',
             currentPrice: 0
+        },
+        TRY: {
+            name: 'TL'
         }
     },
-    crawlerFrequency: 5000,
-    crawlerTimeout: 10000,
-    twitterFrequency: 30000,   
-    twitterTimeout: 10000,
-    twitterInfoFrequency: 3600000
+
+    updateurl: 'http://www.xe.com/currencyconverter/convert/?Amount=1&From=%s&To=%s',
+    watchedCurrencies: ['USD', 'EUR', 'XBT', 'GBP'],
+
+    crawlerInterval: 5000,
+    twitterInterval: 30000,
+    twitterInfoInterval: 3600000
 }
 
 
 //Read Json Data
-jsonfile.readFile(dataFile, function(err, obj) {   
-    if(obj){
+jsonfile.readFile(dataFile, function (err, obj) {
+    if (obj) {
         robotConfig = obj;
         console.log('Data file loaded');
-    }    
+    }
 });
 
 // Set Web Crawlers
-Object.keys(robotConfig.currencies).forEach(function(key) {
-    setInterval(function(key){
-        request(robotConfig.currencies[key].updateurl, function (error, response, html) {        
+robotConfig.watchedCurrencies.forEach(function (key) {
+    //Set All Timer seperately
+    setInterval(function (key) {
+
+        //Determine URL
+        var updateUrl = util.format(robotConfig.updateurl, robotConfig.currencies[key].symbol, robotConfig.currencies[key].convertTo);
+
+        //Request Page
+        request(updateUrl, function (error, response, html) {
+            //Check No error
             if (!error && response.statusCode == 200) {
-            var $ = cheerio.load(html);
-            var price = $('span.uccResultAmount').first().html();
-            if(price){
-                robotConfig.currencies[key].currentPrice = parseFloat(price.replace(",", ""));                   
-                return price !== null;
-            } else {
-                console.log('return false');
-                return false;
-            }  
+                //Load HTML
+                var $ = cheerio.load(html);
+                var price = $('span.uccResultAmount').first().html();
+                //Get Price and check highestPrice
+                if (price) {
+                    robotConfig.currencies[key].currentPrice = parseFloat(price.replace(",", ""));
+                    if (robotConfig.currencies[key].highestPrice < robotConfig.currencies[key].currentPrice) {
+                        robotConfig.currencies[key].highestPrice = robotConfig.currencies[key].currentPrice
+                    }
+                    return price !== null;
+                } else {
+                    return false;
+                }
             } else {
                 return true;
             }
         });
 
-    },robotConfig.crawlerFrequency,key);
+    }, robotConfig.crawlerInterval, key);
 });
 
 var T = new Twit({
@@ -86,32 +111,43 @@ var T = new Twit({
 });
 
 
+
 // Set Twitter Senders
-Object.keys(robotConfig.currencies).forEach(function(key) {
-    setInterval(function(key){
-       const willSendTweet = robotConfig.currencies[key].currentPrice > robotConfig.currencies[key].lastPrice;
-       if(willSendTweet){
-            console.log(robotConfig.currencies[key].name + " yeni rekor kırdı. 1 " + robotConfig.currencies[key].name + " = " +  robotConfig.currencies[key].currentPrice + " TL");
-            T.post('statuses/update', 
-                { status: robotConfig.currencies[key].name + " yeni rekor kırdı. \n1 " + robotConfig.currencies[key].name + " = " +  robotConfig.currencies[key].currentPrice + " TL" }, 
-                function(err, data, response) {
-                   
-                }
+robotConfig.watchedCurrencies.forEach(function (key) {
+    setInterval(function (key) {
+        //Check new highest price
+        var willSendTweet = robotConfig.currencies[key].highestPrice > robotConfig.currencies[key].lastPostedPrice;
+
+        if (willSendTweet) {
+            //Set Message
+            var messageTemplate = "%s yeni bir rekor kırdı. \n\n1 %s = %s %s";
+            var message = util.format(
+                messageTemplate,
+                robotConfig.currencies[key].name,
+                robotConfig.currencies[key].name,
+                robotConfig.currencies[key].highestPrice,
+                robotConfig.currencies[robotConfig.currencies[key].convertTo].name
             );
-            robotConfig.currencies[key].lastPrice =  robotConfig.currencies[key].currentPrice;
-       }
-       jsonfile.writeFileSync(dataFile, robotConfig);
-    },robotConfig.twitterFrequency,key);
+            
+            //Send Message
+            console.log('==============Sending Tweet\n');
+            console.log(message);
+            T.post('statuses/update', { status: message }, function (err, data, response) { });
+            robotConfig.currencies[key].lastPostedPrice = robotConfig.currencies[key].highestPrice;
+        }
+        //Sync Config
+        jsonfile.writeFileSync(dataFile, robotConfig);
+    }, robotConfig.twitterInterval, key);
 });
 
 
-setInterval(function(){
+setInterval(function () {
     var infoMsg = "Dovizde son durum:\n\n";
-    Object.keys(robotConfig.currencies).forEach(function(key) {
-            infoMsg = infoMsg + robotConfig.currencies[key].name + " = " + robotConfig.currencies[key].currentPrice + " TL\n";
+    var infoEntry = "%s = %s %s";
+    robotConfig.watchedCurrencies.forEach(function (key) {
+        infoMsg = infoMsg + util.format(infoEntry,robotConfig.currencies[key].name,robotConfig.currencies[key].currentPrice, robotConfig.currencies[robotConfig.currencies[key].convertTo].name)  + "\n";
     });
-    console.log('Sending Info Tweet')        
-    T.post('statuses/update', { status: infoMsg }, function(err, data, response) {
-        console.log(data)
-    });    
- },robotConfig.twitterInfoFrequency);
+    console.log('============Sending Info Tweet\n')
+    console.log(infoMsg);
+    T.post('statuses/update', { status: infoMsg }, function (err, data, response) { });
+}, robotConfig.twitterInfoInterval);
