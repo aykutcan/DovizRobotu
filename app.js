@@ -43,7 +43,8 @@ var robotConfig = {
     crawlerFrequency: 5000,
     crawlerTimeout: 10000,
     twitterFrequency: 30000,   
-    twitterTimeout: 10000
+    twitterTimeout: 10000,
+    twitterInfoFrequency: 3600000
 }
 
 
@@ -102,3 +103,15 @@ Object.keys(robotConfig.currencies).forEach(function(key) {
        jsonfile.writeFileSync(dataFile, robotConfig);
     },robotConfig.twitterFrequency,key);
 });
+
+
+setInterval(function(){
+    var infoMsg = "Dovizde son durum:\n\n";
+    Object.keys(robotConfig.currencies).forEach(function(key) {
+            infoMsg = infoMsg + robotConfig.currencies[key].name + " = " + robotConfig.currencies[key].currentPrice + " TL\n";
+    });
+    console.log('Sending Info Tweet')        
+    T.post('statuses/update', { status: infoMsg }, function(err, data, response) {
+        console.log(data)
+    });    
+ },robotConfig.twitterInfoFrequency);
